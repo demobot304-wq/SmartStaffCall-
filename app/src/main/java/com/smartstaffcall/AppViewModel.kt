@@ -14,6 +14,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     val staff = mutableStateListOf<Staff>()
     val calls = mutableStateListOf<CallRecord>() // newest first
+    val presenceLog = mutableStateListOf<PresenceRecord>() // newest first
     var message by mutableStateOf<String?>(null)
 
     init {
@@ -23,11 +24,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             storage.saveStaff(staff.toList())
         } else staff.addAll(saved)
         calls.addAll(storage.loadCalls().sortedByDescending { it.createdAt })
+        presenceLog.addAll(storage.loadPresenceLog().sortedByDescending { it.startedAt })
     }
 
     private fun sampleStaff() = listOf(
-        Staff("S01", "Alice Johnson", 0), Staff("S02", "Bob Smith", 1), Staff("S03", "Carla Gomez", 2),
-        Staff("S04", "David Lee", 4), Staff("S05", "Emma Brown", 5), Staff("S06", "Farid Khan", 7)
+        Staff("S01", "Alice Johnson", 0, Post.MANAGER),
+        Staff("S02", "Bob Smith", 1, Post.ASSISTANT_MANAGER),
+        Staff("S03", "Carla Gomez", 2, Post.ASSISTANT_GRADE_1),
+        Staff("S04", "David Lee", 4, Post.DRIVER),
+        Staff("S05", "Emma Brown", 5, Post.PEON, pinned = true),
+        Staff("S06", "Farid Khan", 7, Post.ASSISTANT_GRADE_3)
     )
 
     fun activeCall(staffId: String): CallRecord? =
@@ -35,68 +41,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun callById(id: String?): CallRecord? = calls.firstOrNull { it.callId == id }
 
-    /** Creates a SIMULATED call. Blocks duplicates while the staff member has an active call. */
-    fun createCall(s: Staff) {
-        if (staff.none { it.id == s.id }) { message = "Staff member no longer exists."; return }
-        if (activeCall(s.id) != null) { message = "${s.name} already has an active call."; return }
-        val call = CallRecord(UUID.randomUUID().toString(), s.id, s.name, System.currentTimeMillis())
-        calls.add(0, call)
-        storage.saveCalls(calls.toList())
-        Notifier.show(ctx, call.callId, s.name)
-        message = "Simulated call created for ${s.name}."
+    /** When the orange "no response" period ends, or null if the last call was not a no-response. */
+    private fun orangeUntil(staffId: String): Long? {
+        val last = calls.firstOrNull { it.staffId == staffId } ?: return null
+        val ended = last.endedAt ?: return null
+        return if (last.status == CallStatus.NO_RESPONSE) ended + Timing.ORANGE_MS else null
     }
 
-    fun updateStatus(callId: String, next: CallStatus) {
-        val i = calls.indexOfFirst { it.callId == callId }
-        if (i < 0) { message = "Call not found."; return }
-        val c = calls[i]
-        if (next !in c.status.allowedNext()) {
-            message = "Not allowed: ${c.status.label} to ${next.label}."
-            return
-        }
-        val now = System.currentTimeMillis()
-        val updated = when (next) {
-            CallStatus.RECEIVED -> c.copy(status = next, receivedAt = now)
-            CallStatus.ON_THE_WAY -> c.copy(status = next, onTheWayAt = now)
-            CallStatus.COMPLETED -> c.copy(status = next, completedAt = now)
-            else -> c.copy(status = next, endedAt = now)
-        }
-        calls[i] = updated
-        storage.saveCalls(calls.toList())
-        if (!next.isActive) Notifier.clear(ctx, callId)
-    }
-
-    private fun validate(name: String, id: String): String? {
-        if (name.isBlank()) return "Name cannot be empty."
-        if (name.trim().length > 30) return "Name must be 30 characters or fewer."
-        if (id.isBlank()) return "Staff ID cannot be empty."
-        if (!id.trim().all { it.isLetterOrDigit() || it == '-' || it == '_' }) return "ID may only contain letters, digits, - and _."
-        return null
-    }
-
-    /** Returns an error message, or null on success. */
-    fun addStaff(name: String, id: String, color: Int): String? {
-        validate(name, id)?.let { return it }
-        if (staff.any { it.id.equals(id.trim(), ignoreCase = true) }) return "That staff ID is already used."
-        staff.add(Staff(id.trim(), name.trim(), color))
-        storage.saveStaff(staff.toList())
-        return null
-    }
-
-    /** The ID cannot be changed after creation (history refers to it). */
-    fun editStaff(id: String, name: String, color: Int): String? {
-        validate(name, id)?.let { return it }
-        val i = staff.indexOfFirst { it.id == id }
-        if (i < 0) return "Staff member not found."
-        staff[i] = Staff(id, name.trim(), color)
-        storage.saveStaff(staff.toList())
-        return null
-    }
-
-    fun removeStaff(id: String): String? {
-        if (activeCall(id) != null) return "Finish or cancel the active call first."
-        staff.removeAll { it.id == id }
-        storage.saveStaff(staff.toList())
-        return null
-    }
-}
+    /** Colour rule: leave (white) > away (yellow) > calling (blue) > no response (orange) > available (green). */
+    fun visualOf(s: Staff, now: Long): Visual {
+        if (s.presence == Presence.LEAVE) return Visual.LEAVE
+        if (s.presence == Presence.AWAY) return Visual.AWAY
+        if (activeCall(s.id)?.status == CallStatus.PENDING) return Visual.CALLING
+        val until = orangeUntil(s.id)
+        if (until != null && now
