@@ -24,16 +24,18 @@ enum class CallStatus(val label: String, private val colorHex: Long) {
     }
 }
 
-/** Staff posts, listed from most senior to least. The dashboard groups staff in this order. */
-enum class Post(val label: String) {
-    MANAGER("Manager"),
-    ASSISTANT_MANAGER("Assistant Manager"),
-    ASSISTANT_GRADE_1("Assistant Grade 1"),
-    ASSISTANT_GRADE_2("Assistant Grade 2"),
-    ASSISTANT_GRADE_3("Assistant Grade 3"),
-    DRIVER("Driver"),
-    PEON("Peon")
-}
+/** A post (job title). The admin controls this list and its order (most senior first). */
+data class PostDef(val id: String, val name: String)
+
+fun defaultPosts(): List<PostDef> = listOf(
+    PostDef("MANAGER", "Manager"),
+    PostDef("ASSISTANT_MANAGER", "Assistant Manager"),
+    PostDef("ASSISTANT_GRADE_1", "Assistant Grade 1"),
+    PostDef("ASSISTANT_GRADE_2", "Assistant Grade 2"),
+    PostDef("ASSISTANT_GRADE_3", "Assistant Grade 3"),
+    PostDef("DRIVER", "Driver"),
+    PostDef("PEON", "Peon")
+)
 
 enum class Presence { PRESENT, AWAY, LEAVE }
 
@@ -57,13 +59,14 @@ data class Staff(
     val id: String,
     val name: String,
     val colorIndex: Int,
-    val post: Post = Post.PEON,
+    val postId: String = "PEON",
     val pinned: Boolean = false,
     val responsibilities: String = "",
     val currentWork: String = "",
     val presence: Presence = Presence.PRESENT,
     val presenceReason: String = "",
-    val awayUntil: Long? = null
+    val awayUntil: Long? = null,
+    val profileSet: Boolean = false // true after the staff member did the first-time setup
 )
 
 data class CallRecord(
@@ -91,6 +94,28 @@ data class PresenceRecord(
     val reason: String,
     val startedAt: Long,
     val endedAt: Long? = null
+)
+
+enum class RequestStatus(val label: String) {
+    PENDING("Waiting"),
+    APPROVED("Approved"),
+    REJECTED("Rejected")
+}
+
+/** A staff member's request to change their post / responsibilities / current work. The head must approve. */
+data class ChangeRequest(
+    val id: String,
+    val staffId: String,
+    val staffName: String,
+    val oldPostId: String,
+    val oldResp: String,
+    val oldWork: String,
+    val newPostId: String,
+    val newResp: String,
+    val newWork: String,
+    val createdAt: Long,
+    val status: RequestStatus = RequestStatus.PENDING,
+    val decidedAt: Long? = null
 )
 
 object Palette {
